@@ -105,6 +105,7 @@ float Single_Pre_Read_J1(int sensor);
 void LCD_Display();
 void Deflation();
 void tcaSelect(uint8_t i);
+float pressure_Control(valve1, valve2);
 
 void setup()
 {
@@ -136,32 +137,57 @@ void setup()
 void loop() {
     Post_Sensors();
     LCD_Display();
-    pressure_Control();
+    pressure_Control(1.5, 1.5)
 }
 
-void pressure_Control(){
-  int ready_cell = 0;
-    //All Fingers
+float pressure_Control(valve1, valve2){
+  int done_1 = 0;
+  int done_2 = 0;
+  while(!(done_1 && done_2)){
     MC33996_J1.turn_pin_on(6); //pressure pump on
-    for (int i = 0; i < 2; i++)
-    {
-        MC33996_J1.turn_pin_on(i);
-        MC33996_J1.turn_pin_off(i+7);
-        Pro_pwm_J1.setPWM(i, 0, 4095);
+    if (Single_Pre_Read_J1(6) <= valve1){
+      MC33996_J1.turn_pin_on(0);
+      MC33996_J1.turn_pin_off(7);
+    }
+    if (Single_Pre_Read_J1(6) >= valve1){
+      MC33996_J1.turn_pin_off(0);
+      MC33996_J1.turn_pin_on(7);
+      done_1 = 1;
     }
 
-    while (ready_cell!=2) {
-
-        for(int i = 0; i < 2; i++) {
-
-            if(Single_Pre_Read_J1(i+6)>5) {
-                MC33996_J1.turn_pin_off(i);
-               MC33996_J1.turn_pin_on(0);
-                Pro_pwm_J1.setPWM(i, 4095, 0);
-                ready_cell++;
-            }
-        }
+    if (Single_Pre_Read_J1(7) <= valve2){
+      MC33996_J1.turn_pin_on(1);
+      MC33996_J1.turn_pin_off(8);
     }
+    if (Single_Pre_Read_J1(7) >= valve2){
+      MC33996_J1.turn_pin_off(1);
+      MC33996_J1.turn_pin_on(8);
+      done_2 = 1;
+    }
+  }
+
+
+
+  
+    // for (int i = 0; i < 2; i++)
+    // {
+    //     MC33996_J1.turn_pin_on(i);
+    //     MC33996_J1.turn_pin_off(i+7);
+    //     Pro_pwm_J1.setPWM(i, 0, 4095);
+    // }
+
+    // while (ready_cell!=2) {
+
+    //     for(int i = 0; i < 2; i++) {
+
+    //         if(Single_Pre_Read_J1(i+6)>1.5) {
+    //             MC33996_J1.turn_pin_off(i);
+    //            MC33996_J1.turn_pin_on(0);
+    //             Pro_pwm_J1.setPWM(i, 4095, 0);
+    //             ready_cell++;
+    //         }
+    //     }
+    // }
    MC33996_J1.turn_pin_off(6);
 }
 
