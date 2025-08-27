@@ -10,17 +10,20 @@
 #include "AbpSensor.h"      // SPI Pressure sensor
 #include "NotoSansBold15.h" // Font for LCD display
 #include "NotoSansMonoSCB20.h" // Font for LCD display
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_Sensor.h>
 
-Adafruit_MPU6050 mpu;
-// TCA9548A I2CMux_J1(0x73);
-// Timers
-unsigned long timer = 0;
-float timeStep = 0.01;
 
-// Pitch, Roll and Yaw values
-float pitch = 0;
+float value1 = 0, value2 =0;
+int done_1 = 0, done_2 =0;
+int state = 1;
+int Actuator1_P, Actuator2_P;   // Variable to determine if the actuator need to be pressurized or deflated 0 is to be deflation and 1 is inflation.
+byte  Readcommand[10]; 
+int Therapy_time = 0, Therapy_cycle = 0;
+float Glove_Set_Pressure = 1, Wrist_Set_Pressure = 1, Elbow_Set_Pressure = 1 ;
+float Degree = 20; // Initial degree: 20, will be replaced by 40 in the loop.
+float Pressure[10];
+int Flex_angel[5] = {10,20,30,40,110};
+unsigned long start_time;
+int count = 0;
 
 #define MC33996_CS1   16
 #define MC33996_CS2   14 
@@ -32,14 +35,6 @@ float pitch = 0;
 #define PRESSURE_SEN2 2
 #define PRESSURE_SEN3 1
 
-byte  Readcommand[10]; 
-int Therapy_time = 0, Therapy_cycle = 0;
-float Glove_Set_Pressure = 1, Wrist_Set_Pressure = 1, Elbow_Set_Pressure = 1 ;
-float Degree = 20; // Initial degree: 20, will be replaced by 40 in the loop.
-float Pressure[10];
-int Flex_angel[5] = {10,20,30,40,110};
-unsigned long start_time;
-int count = 0;
 
 TFT_eSPI lcd = TFT_eSPI(); // LCD setting
 TFT_eSprite sprite = TFT_eSprite(&lcd);
@@ -54,170 +49,69 @@ TFT_eSprite sprite = TFT_eSprite(&lcd);
 TCA9548A I2CMux_J1(0x73);
 
 NxpDemuxsw MC33996_J1  ( MC33996_CS1 ); //MC33996 at daughter board1
-NxpDemuxsw MC33996_J2  ( MC33996_CS2 ); //MC33996 at daughter board2
-// NxpDemuxsw MC33996_J3  ( MC33996_CS3 ); //MC33996 at daughter board3
-
 AnalogADG731 ADG731_J1 ( ADG731_CS1  ); //ADG731 at daughter board1
-AnalogADG731 ADG731_J2 ( ADG731_CS2  ); //ADG731 at daughter board2
-// AnalogADG731 ADG731_J3 ( ADG731_CS3  ); //ADG731 at daughter board3
 
 Adafruit_PWMServoDriver Pro_pwm_J1 = Adafruit_PWMServoDriver( 0x41 ); // Jumper setting on the board1
-//Adafruit_PWMServoDriver Pro_pwm_J2 = Adafruit_PWMServoDriver( 0x42 ); // Jumper setting on the board2
-double secp;
-double secv;
-int controlDuration;
-char commandChar;
-int noOfCycles;
-int numberOfTrials; 
-int timeBetweenTrials; // Time between trials in milliseconds
 
 
-void handleIncomingData(String data);
-void Command_Detection(char commandChar);
-void parseControlStrings(String data);
-void Glove_Flex();
-void Glove_Ext();
-void Glove_Cycle();
-void Wrist_Cycle();
-void Elbow_Cycle();
-void Glove_Wrist();
-void Wrist_Elbow();
-void Vac_Def_ON();
-void Glove_Wrist_Elbow();
-void Pre_Sensor_Read();
-uint32_t readADC_Cal(int ADC_Raw);
-void Command_Detection();
-void Post_Sensors();
-void Air_Valve_Test();
-void Flex_Sensor_Test();
-void Pre_Pump_ON();
-void Pre_Pump_OFF();
-void Pre_Def_OFF();
-void Pre_Def_ON();
-void Vac_Pump_ON();
-void Vac_Pump_OFF();
-void Pro_Valve_Test();
-void All_Pro_OFF();
-void All_OFF();
-void Glove_Flex_Read_Left();
-void Glove_Flex_Read_Right();
-float Single_Pre_Read_J1(int sensor);
-void LCD_Display();
-void Deflation();
-void tcaSelect(uint8_t i);
-float pressure_Control(valve1, valve2);
-
-void setup()
-{
-    Serial.begin(115200);
-    Serial.print("Serial begin");
-
-    Wire.begin( 17, 18); // Diff with Veysel's design, cannot copy
-    SPI.begin(21, -1, 12, -1); //SCLK, MISO, MOSI, SS
-
-    pinMode(15, OUTPUT); // to boot with DEV board
-    digitalWrite(15, 1);  // and/or power from 5v rail instead of USB
-
-    Pro_pwm_J1.begin();
-    Pro_pwm_J1.setPWMFreq(1600);  // Set PWM Freq
-
-    Pro_pwm_J1.setPWM(0, 0, 4095);//ON
-    Pro_pwm_J1.setPWM(1, 0, 4095);
-
-    lcd.init(); // LCD setting
-    lcd.fillScreen(TFT_BLACK);
-    lcd.setRotation(3);
-    
-    sprite.createSprite(320, 170);
-    sprite.setTextDatum(3);
-    sprite.setSwapBytes(true);
-    }
-  
-
-void loop() {
+void pressure_Control(){     
     Post_Sensors();
-    LCD_Display();
-    pressure_Control(1.5, 1.5)
-}
-
-float pressure_Control(valve1, valve2){
-  int done_1 = 0;
-  int done_2 = 0;
-  while(!(done_1 && done_2)){
-    MC33996_J1.turn_pin_on(6); //pressure pump on
-    if (Single_Pre_Read_J1(6) <= valve1){
-      MC33996_J1.turn_pin_on(0);
-      MC33996_J1.turn_pin_off(7);
+    if((Single_Pre_Read_J1(10) >= 20)||((Single_Pre_Read_J1(9) >= 20))){
+      state = 1;   //Emergency stop
     }
-    if (Single_Pre_Read_J1(6) >= valve1){
-      MC33996_J1.turn_pin_off(0);
+    Post_Sensors();
+if(Actuator1_P){
+  MC33996_J1.turn_pin_on(6); //pressure pump on
+    if (Single_Pre_Read_J1(10) <= value1){
       MC33996_J1.turn_pin_on(7);
-      done_1 = 1;
     }
 
-    if (Single_Pre_Read_J1(7) <= valve2){
-      MC33996_J1.turn_pin_on(1);
-      MC33996_J1.turn_pin_off(8);
+    if (Single_Pre_Read_J1(10) > value1){
+      MC33996_J1.turn_pin_off(7);
+      done_1 = done_1 + 1;
+     }
+}
+Post_Sensors();
+if(!Actuator1_P){
+  MC33996_J1.turn_pin_on(13);// Vaccum pump on
+    if (Single_Pre_Read_J1(10) > value1){
+      MC33996_J1.turn_pin_on(0);
     }
-    if (Single_Pre_Read_J1(7) >= valve2){
-      MC33996_J1.turn_pin_off(1);
+
+    if (Single_Pre_Read_J1(10) <= value1){
+      MC33996_J1.turn_pin_off(0);
+      done_1 = done_1 + 1;
+     }
+}
+Post_Sensors();
+if(Actuator2_P){
+  MC33996_J1.turn_pin_on(6); //pressure pump on
+    if (Single_Pre_Read_J1(9) <= value2){
       MC33996_J1.turn_pin_on(8);
-      done_2 = 1;
     }
+
+    if (Single_Pre_Read_J1(9) > value2){
+      MC33996_J1.turn_pin_off(8);
+      done_2 = done_2 + 1;
+     }
+}
+Post_Sensors();
+if(!Actuator2_P){
+  MC33996_J1.turn_pin_on(13);// Vaccum pump on
+    if (Single_Pre_Read_J1(9) > value2){
+      MC33996_J1.turn_pin_on(1);
+    }
+
+    if (Single_Pre_Read_J1(9) <= value2){
+      MC33996_J1.turn_pin_off(1);
+      done_2 = done_2 + 1;
+     }
+}
+  if((done_1 >= 2) && (done_2 >= 2)){
+      state = 1;
   }
-
-
-
-  
-    // for (int i = 0; i < 2; i++)
-    // {
-    //     MC33996_J1.turn_pin_on(i);
-    //     MC33996_J1.turn_pin_off(i+7);
-    //     Pro_pwm_J1.setPWM(i, 0, 4095);
-    // }
-
-    // while (ready_cell!=2) {
-
-    //     for(int i = 0; i < 2; i++) {
-
-    //         if(Single_Pre_Read_J1(i+6)>1.5) {
-    //             MC33996_J1.turn_pin_off(i);
-    //            MC33996_J1.turn_pin_on(0);
-    //             Pro_pwm_J1.setPWM(i, 4095, 0);
-    //             ready_cell++;
-    //         }
-    //     }
-    // }
-   MC33996_J1.turn_pin_off(6);
 }
 
-void vacuum_Control(){
-  int ready_cell1 = 0;
-    //All Fingers
-    Vac_Pump_ON();  
-    for (int i = 0; i < 5; i++)
-    {
-        MC33996_J1.turn_pin_on(i+7);
-        MC33996_J1.turn_pin_off(i);
-        Pro_pwm_J1.setPWM(i, 0, 4095);
-    }
-
-    while (ready_cell1!=5) {
-
-        for(int i = 0; i < 5; i++) {
-
-            if(Single_Pre_Read_J1(i+6)<0.1) {
-                MC33996_J1.turn_pin_off(i+7);
-                MC33996_J1.turn_pin_on(11);
-                Pro_pwm_J1.setPWM(i, 4095, 0);
-                Pro_pwm_J1.setPWM(4, 0, 4095);
-                ready_cell1++;
-            }
-        }
-    }
-    delay(2000);
-   Vac_Pump_OFF(); 
-}
 
 
 void Post_Sensors(){
@@ -252,7 +146,7 @@ void Vac_Pump_OFF(){
 void Pre_Sensor_Read(){
     Serial.print(millis());
     Serial.print(',');
-    for (int i = 10; i > 0; i--)
+    for (int i = 10; i > 8; i--)
     {   
         Pressure[ i - 1 ] = Single_Pre_Read_J1( i ); // 10-1 save to 9-0 in array
         Serial.print(Pressure[ i - 1 ]); // Convert to PSI
@@ -270,7 +164,8 @@ float Single_Pre_Read_J1(int sensor){
         int Cal_read = readADC_Cal(ADC_Reading);
         Volt = Cal_read * 0.0012207 * 1.506; // 0.0012207 = 5/4096, 1.53 is compensation so sensor readout matches MCU reading
         // ana_read = 0.02439 * ( analogRead( PRESSURE_SEN1 ) - sensor_bias[ sensor - 6] );
-        Sensor_read = ( Volt - 0.5 ) * 14.5 * 1.142;//ABPBANN004, 4Bar=58PSI
+        //Sensor_read = ( Volt - 0.5 ) * 14.5 * 1.142;//ABPBANN004, 4Bar=58PSI
+        Sensor_read = ((Volt - 0.58)*16.9) + 0.3;
         if ( Sensor_read < 0 ) { Sensor_read = 0; }
     }
     else{ // 1 - 5 Vac sensors
@@ -332,3 +227,85 @@ void LCD_Display(){
     sprite.pushSprite(0,0);
 }
 
+void Command_Detection(){
+    String serialReceived;
+    if (Serial.available() > 0)
+    {
+        serialReceived = Serial.readString();
+    }
+    serialReceived.trim();
+
+    if (serialReceived.length() >= 1) {
+        int space1 = serialReceived.indexOf(' ');
+        value1 = serialReceived.substring(0, space1).toFloat();
+        value2 = serialReceived.substring(space1 + 1).toFloat();
+   state = 0;
+}
+}
+
+void setup()
+{
+    Serial.begin(115200);
+    Serial.print("Serial begin");
+
+    Wire.begin( 17, 18); // Diff with Veysel's design, cannot copy
+    SPI.begin(21, -1, 12, -1); //SCLK, MISO, MOSI, SS
+
+    pinMode(15, OUTPUT); // to boot with DEV board
+    digitalWrite(15, 1);  // and/or power from 5v rail instead of USB
+
+    Pro_pwm_J1.begin();
+    Pro_pwm_J1.setPWMFreq(1600);  // Set PWM Freq
+
+    Pro_pwm_J1.setPWM(0, 0, 4095);//ON
+    Pro_pwm_J1.setPWM(1, 0, 4095);
+    Pro_pwm_J1.setPWM(2, 0, 4095);
+
+    lcd.init(); // LCD setting
+    lcd.fillScreen(TFT_BLACK);
+    lcd.setRotation(3);
+    
+    sprite.createSprite(320, 170);
+    sprite.setTextDatum(3);
+    sprite.setSwapBytes(true);
+
+    }
+  
+
+void loop() {
+    for(;;){
+  while(state == 1){
+    done_1 = 0;
+    done_2 = 0;
+    MC33996_J1.turn_pin_off(6); //pressure pump on
+    MC33996_J1.turn_pin_off(13);
+    MC33996_J1.turn_pin_off(7);
+    MC33996_J1.turn_pin_off(8);
+    MC33996_J1.turn_pin_off(0);
+    MC33996_J1.turn_pin_off(1);
+    Command_Detection();
+    if (Single_Pre_Read_J1(10) <= value1){
+    Actuator1_P = 1;
+   }
+   else if (Single_Pre_Read_J1(10) > value1 ){
+    Actuator1_P = 0;
+   }
+   if (Single_Pre_Read_J1(9) <= value1){
+    Actuator2_P = 1;
+   }
+   else if (Single_Pre_Read_J1(9) > value1 ){
+    Actuator2_P = 0;
+   }
+    //vTaskDelay(30);
+    Post_Sensors();
+    LCD_Display();
+  }
+  while(state == 0){
+  //  MC33996_J1.turn_pin_on(6); //pressure pump on
+  //  MC33996_J1.turn_pin_on(13);// Vaccum pump on
+   Post_Sensors();
+   LCD_Display();
+   pressure_Control();
+ }
+}
+}
