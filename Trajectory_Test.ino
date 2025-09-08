@@ -10,6 +10,8 @@
 #include "AbpSensor.h"      // SPI Pressure sensor
 #include "NotoSansBold15.h" // Font for LCD display
 #include "NotoSansMonoSCB20.h" // Font for LCD display
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 
 float value1 = 0, value2 =0;
@@ -62,10 +64,65 @@ AnalogADG731 ADG731_J1 ( ADG731_CS1  ); //ADG731 at daughter board1
 Adafruit_PWMServoDriver Pro_pwm_J1 = Adafruit_PWMServoDriver( 0x41 ); // Jumper setting on the board1
 
 
-void pressure_Control() {
-    Post_Sensors(); // Only call once at the start
+void TaskReadSensors(void *pvParameters) {
+  (void) pvParameters;
+
+  for (;;) {
     float sensor10 = Single_Pre_Read_J1(10);
-    float sensor9 = Single_Pre_Read_J1(9);
+    float sensor9  = Single_Pre_Read_J1(9);
+    Serial.print(millis());
+    Serial.print(',');
+    Serial.print("Sensor10: ");
+    Serial.print(sensor10, 2);
+    Serial.print("  |  Sensor9: ");
+    Serial.println(sensor9, 2);
+
+    // also update global Pressure[] if needed
+    Pressure[9] = sensor10;
+    Pressure[8] = sensor9;
+
+    vTaskDelay(pdMS_TO_TICKS(200)); // read every 200 ms
+  }
+}
+
+void TaskControl(void *pvParameters) {
+  (void) pvParameters;
+  for (;;) {
+    if (state == 1) {
+      done_1 = 0;
+      done_2 = 0;
+      MC33996_J1.turn_pin_off(6);
+      MC33996_J1.turn_pin_off(13);
+      MC33996_J1.turn_pin_off(7);
+      MC33996_J1.turn_pin_off(8);
+      MC33996_J1.turn_pin_off(0);
+      MC33996_J1.turn_pin_off(1);
+
+      Command_Detection();
+
+      if (Pressure[9] <= value1) Actuator1_P = 1;
+      else Actuator1_P = 0;
+
+      if (Pressure[8] <= value2) Actuator2_P = 1;
+      else Actuator2_P = 0;
+
+      Post_Sensors();
+      LCD_Display();
+
+    } else if (state == 0) {
+      Post_Sensors();
+      LCD_Display();
+      pressure_Control();
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(50)); // control loop every 50 ms
+  }
+}
+
+void pressure_Control() {
+
+    float sensor10 = Pressure[9];
+    float sensor9  = Pressure[8];
 
     if ((sensor10 >= 20) || (sensor9 >= 20)) {
         state = 1;   // Emergency stop
@@ -255,7 +312,6 @@ void setup()
 {
     Serial.begin(115200);
     Serial.print("Serial begin");
-
     Wire.begin( 17, 18); // Diff with Veysel's design, cannot copy
     SPI.begin(21, -1, 12, -1); //SCLK, MISO, MOSI, SS
 
@@ -277,43 +333,13 @@ void setup()
     sprite.setTextDatum(3);
     sprite.setSwapBytes(true);
 
+    // FreeRTOS tasks
+    xTaskCreatePinnedToCore(TaskReadSensors, "ReadSensors", 4096, NULL, 1, NULL, 1);
+    xTaskCreatePinnedToCore(TaskControl, "Control", 8192, NULL, 2, NULL, 1);
+
     }
   
 
 void loop() {
-    for(;;){
-  while(state == 1){
-    done_1 = 0;
-    done_2 = 0;
-    MC33996_J1.turn_pin_off(6); //pressure pump on
-    MC33996_J1.turn_pin_off(13);
-    MC33996_J1.turn_pin_off(7);
-    MC33996_J1.turn_pin_off(8);
-    MC33996_J1.turn_pin_off(0);
-    MC33996_J1.turn_pin_off(1);
-    Command_Detection();
-    if (Single_Pre_Read_J1(10) <= value1){
-    Actuator1_P = 1;
-   }
-   else if (Single_Pre_Read_J1(10) > value1 ){
-    Actuator1_P = 0;
-   }
-   if (Single_Pre_Read_J1(9) <= value1){
-    Actuator2_P = 1;
-   }
-   else if (Single_Pre_Read_J1(9) > value1 ){
-    Actuator2_P = 0;
-   }
-    //vTaskDelay(30);
-    Post_Sensors();
-    LCD_Display();
-  }
-  while(state == 0){
-  //  MC33996_J1.turn_pin_on(6); //pressure pump on
-  //  MC33996_J1.turn_pin_on(13);// Vaccum pump on
-   Post_Sensors();
-   LCD_Display();
-   pressure_Control();
- }
-}
+    
 }
