@@ -25,6 +25,14 @@ int Flex_angel[5] = {10,20,30,40,110};
 unsigned long start_time;
 int count = 0;
 
+
+#define NUM_SENSORS 10
+#define FILTER_SIZE 5
+
+float pressure_buffer[NUM_SENSORS][FILTER_SIZE] = {0};
+int buffer_index[NUM_SENSORS] = {0};
+
+
 #define MC33996_CS1   16
 #define MC33996_CS2   14 
 #define MC33996_CS3   10
@@ -54,62 +62,62 @@ AnalogADG731 ADG731_J1 ( ADG731_CS1  ); //ADG731 at daughter board1
 Adafruit_PWMServoDriver Pro_pwm_J1 = Adafruit_PWMServoDriver( 0x41 ); // Jumper setting on the board1
 
 
-void pressure_Control(){     
-    Post_Sensors();
-    if((Single_Pre_Read_J1(10) >= 20)||((Single_Pre_Read_J1(9) >= 20))){
-      state = 1;   //Emergency stop
-    }
-    Post_Sensors();
-if(Actuator1_P){
-  MC33996_J1.turn_pin_on(6); //pressure pump on
-    if (Single_Pre_Read_J1(10) <= value1){
-      MC33996_J1.turn_pin_on(7);
+void pressure_Control() {
+    Post_Sensors(); // Only call once at the start
+    float sensor10 = Single_Pre_Read_J1(10);
+    float sensor9 = Single_Pre_Read_J1(9);
+
+    if ((sensor10 >= 20) || (sensor9 >= 20)) {
+        state = 1;   // Emergency stop
     }
 
-    if (Single_Pre_Read_J1(10) > value1){
-      MC33996_J1.turn_pin_off(7);
-      done_1 = done_1 + 1;
-     }
-}
-Post_Sensors();
-if(!Actuator1_P){
-  MC33996_J1.turn_pin_on(13);// Vaccum pump on
-    if (Single_Pre_Read_J1(10) > value1){
-      MC33996_J1.turn_pin_on(0);
+    if (Actuator1_P) {
+        MC33996_J1.turn_pin_on(6); // pressure pump on
+        if (sensor10 <= value1) {
+            MC33996_J1.turn_pin_on(7);
+        }
+        if (sensor10 > value1) {
+            MC33996_J1.turn_pin_off(7);
+            done_1 = done_1 + 1;
+        }
     }
 
-    if (Single_Pre_Read_J1(10) <= value1){
-      MC33996_J1.turn_pin_off(0);
-      done_1 = done_1 + 1;
-     }
-}
-Post_Sensors();
-if(Actuator2_P){
-  MC33996_J1.turn_pin_on(6); //pressure pump on
-    if (Single_Pre_Read_J1(9) <= value2){
-      MC33996_J1.turn_pin_on(8);
+    if (!Actuator1_P) {
+        MC33996_J1.turn_pin_on(13); // Vaccum pump on
+        if (sensor10 > value1) {
+            MC33996_J1.turn_pin_on(0);
+        }
+        if (sensor10 <= value1) {
+            MC33996_J1.turn_pin_off(0);
+            done_1 = done_1 + 1;
+        }
     }
 
-    if (Single_Pre_Read_J1(9) > value2){
-      MC33996_J1.turn_pin_off(8);
-      done_2 = done_2 + 1;
-     }
-}
-Post_Sensors();
-if(!Actuator2_P){
-  MC33996_J1.turn_pin_on(13);// Vaccum pump on
-    if (Single_Pre_Read_J1(9) > value2){
-      MC33996_J1.turn_pin_on(1);
+    if (Actuator2_P) {
+        MC33996_J1.turn_pin_on(6); // pressure pump on
+        if (sensor9 <= value2) {
+            MC33996_J1.turn_pin_on(8);
+        }
+        if (sensor9 > value2) {
+            MC33996_J1.turn_pin_off(8);
+            done_2 = done_2 + 1;
+        }
     }
 
-    if (Single_Pre_Read_J1(9) <= value2){
-      MC33996_J1.turn_pin_off(1);
-      done_2 = done_2 + 1;
-     }
-}
-  if((done_1 >= 2) && (done_2 >= 2)){
-      state = 1;
-  }
+    if (!Actuator2_P) {
+        MC33996_J1.turn_pin_on(13); // Vaccum pump on
+        if (sensor9 > value2) {
+            MC33996_J1.turn_pin_on(1);
+        }
+        if (sensor9 <= value2) {
+            MC33996_J1.turn_pin_off(1);
+            done_2 = done_2 + 1;
+        }
+    }
+
+    if ((done_1 >= 5) && (done_2 >= 5)) {
+        state = 1;
+    }
 }
 
 
@@ -158,27 +166,27 @@ void Pre_Sensor_Read(){
 float Single_Pre_Read_J1(int sensor){
     float Sensor_read = 0;
     float Volt = 0;
-    if ( sensor > 5 ){ // 6 - 10 pressure sensors
         ADG731_J1.select( sensor ); //Array starting from 0
         int ADC_Reading =  analogRead( PRESSURE_SEN1 );
         int Cal_read = readADC_Cal(ADC_Reading);
         Volt = Cal_read * 0.0012207 * 1.506; // 0.0012207 = 5/4096, 1.53 is compensation so sensor readout matches MCU reading
         // ana_read = 0.02439 * ( analogRead( PRESSURE_SEN1 ) - sensor_bias[ sensor - 6] );
         //Sensor_read = ( Volt - 0.5 ) * 14.5 * 1.142;//ABPBANN004, 4Bar=58PSI
-        Sensor_read = ((Volt - 0.58)*16.9) + 0.3;
-        if ( Sensor_read < 0 ) { Sensor_read = 0; }
+        Sensor_read = (Volt - 0.48)*15.25;
+        //Sensor_read = ((Volt - 0.58)*16.9) + 0.3;
+         if ( Sensor_read < 0 ) { Sensor_read = 0; }
+    int idx = sensor - 1; // sensors are 1-indexed
+    pressure_buffer[idx][buffer_index[idx]] = Sensor_read;
+    buffer_index[idx] = (buffer_index[idx] + 1) % FILTER_SIZE;
+
+    // Calculate average
+    float sum = 0;
+    for (int i = 0; i < FILTER_SIZE; i++) {
+        sum += pressure_buffer[idx][i];
     }
-    else{ // 1 - 5 Vac sensors
-        ADG731_J1.select( sensor ); //Array starting from 0
-        // ana_read = 0.005882 * ( Vac_bias[ sensor - 1] - analogRead( PRESSURE_SEN1 )  );
-        int ADC_Reading = analogRead( PRESSURE_SEN1 );
-        int Cal_read = readADC_Cal(ADC_Reading);
-        Volt = Cal_read * 0.0012207 * 1.6752; // 0.0012207 = 5/4096, 1.53 is compensation so sensor readout matches MCU reading
-        Sensor_read = 18.9543 * ( Volt * 0.2 - 0.92 ) - 0.2; // Vac sensor read, mmHg tp PSI
-        if ( Sensor_read > 0 ) { Sensor_read = 0; }
-    }
-    return abs( Sensor_read );
+    return sum / FILTER_SIZE;
 }
+
   
 
 uint32_t readADC_Cal(int ADC_Raw)
