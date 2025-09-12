@@ -69,7 +69,7 @@ void TaskReadSensors(void *pvParameters) {
 
   for (;;) {
     float sensor10 = Single_Pre_Read_J1(10);
-    float sensor9  = Single_Pre_Read_J1(8);
+    float sensor9  = Single_Pre_Read_J1(9);
     Serial.print(millis());
     Serial.print(',');
     Serial.print("Sensor10: ");
@@ -81,7 +81,7 @@ void TaskReadSensors(void *pvParameters) {
     Pressure[9] = sensor10;
     Pressure[8] = sensor9;
 
-    vTaskDelay(pdMS_TO_TICKS(20)); // read every 20 ms
+    vTaskDelay(pdMS_TO_TICKS(200)); // read every 200 ms
   }
 }
 
@@ -130,7 +130,6 @@ void TaskControl(void *pvParameters) {
       done_2 = 0;
       MC33996_J1.turn_pin_off(6);
       MC33996_J1.turn_pin_off(13);
-      MC33996_J1.turn_pin_off(12);
       MC33996_J1.turn_pin_off(7);
       MC33996_J1.turn_pin_off(8);
       MC33996_J1.turn_pin_off(0);
@@ -144,32 +143,19 @@ void TaskControl(void *pvParameters) {
       if (Pressure[8] <= value2) Actuator2_P = 1;
       else Actuator2_P = 0;
 
-      
-      // LCD_Display();
+      Post_Sensors();
+      LCD_Display();
 
     } else if (state == 0) {
-      
-      //LCD_Display();
+      Post_Sensors();
+      LCD_Display();
       pressure_Control();
     }
 
     vTaskDelay(pdMS_TO_TICKS(50)); // control loop every 50 ms
   }
 }
-void pressure_Release() {
-  MC33996_J1.turn_pin_on(7);
-  MC33996_J1.turn_pin_on(8);
-  MC33996_J1.turn_pin_on(12);
 
-  delay(2000);
-  state = 1;
-}
-void pressure_Distribute() {
-  MC33996_J1.turn_pin_on(7);
-  MC33996_J1.turn_pin_on(8);
-  delay(2000);
-  state = 1;
-}
 void pressure_Control() {
 
     float sensor10 = Pressure[9];
@@ -224,7 +210,6 @@ void pressure_Control() {
     }
 
     if ((done_1 >= 5) && (done_2 >= 5)) {
-      //if ((done_1 >= 5)){
         state = 1;
     }
 }
@@ -281,7 +266,7 @@ float Single_Pre_Read_J1(int sensor){
         Volt = Cal_read * 0.0012207 * 1.506; // 0.0012207 = 5/4096, 1.53 is compensation so sensor readout matches MCU reading
         // ana_read = 0.02439 * ( analogRead( PRESSURE_SEN1 ) - sensor_bias[ sensor - 6] );
         //Sensor_read = ( Volt - 0.5 ) * 14.5 * 1.142;//ABPBANN004, 4Bar=58PSI
-        Sensor_read = (Volt - 0.5)*15.25;
+        Sensor_read = (Volt - 0.48)*15.25;
         //Sensor_read = ((Volt - 0.58)*16.9) + 0.3;
          if ( Sensor_read < 0 ) { Sensor_read = 0; }
     int idx = sensor - 1; // sensors are 1-indexed
@@ -351,19 +336,10 @@ void Command_Detection(){
         serialReceived = Serial.readString();
     }
     serialReceived.trim();
-    if(serialReceived == "d"){   //d to distribute pressure
-      pressure_Distribute();
-      return;
-    }
-    if(serialReceived == "r"){    //r to release pressure
-      pressure_Release();
-      return;
-    }
 
     if (serialReceived.length() >= 1) {
         int space1 = serialReceived.indexOf(' ');
         value1 = serialReceived.substring(0, space1).toFloat();
-        value1 = value1 + 0.9;
         value2 = serialReceived.substring(space1 + 1).toFloat();
    state = 0;
 }
