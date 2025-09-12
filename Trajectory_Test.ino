@@ -85,6 +85,43 @@ void TaskReadSensors(void *pvParameters) {
   }
 }
 
+// Task that feeds value pairs, but only when the system
+// has finished processing the previous pair (i.e. state returned to 1).
+void TaskSendPairs(void *pvParameters)
+{
+    (void) pvParameters;
+
+    for (int a = 0; a <= 9; a++) {
+        for (int b = 0; b <= 9; b++) {
+            if (a == 0 && b == 0) continue; // optional: skip (0,0)
+
+            // ---- Wait for the system to be ready ----
+            // Only send a pair after the controller is idle (state==1)
+            while (state != 1) {      // wait until previous cycle finishes
+                vTaskDelay(pdMS_TO_TICKS(100)); // check every 100 ms
+            }
+
+            // ---- Send the pair exactly as if typed from Serial monitor ----
+            Serial.print(a);
+            Serial.print(' ');
+            Serial.println(b);
+
+            // ---- Now wait for the controller to actually start
+            //      (Command_Detection will set state = 0) ----
+            while (state != 0) {      // ensure it has switched to active
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+
+            // At this point the pair is being processed.
+            // When the control loop finishes it will set state back to 1,
+            // and the outer while() at the top of the next iteration
+            // will hold off until that happens.
+        }
+    }
+
+    vTaskDelete(NULL); // All pairs sent — stop the task
+}
+
 void TaskControl(void *pvParameters) {
   (void) pvParameters;
   for (;;) {
@@ -336,7 +373,7 @@ void setup()
     // FreeRTOS tasks
     xTaskCreatePinnedToCore(TaskReadSensors, "ReadSensors", 4096, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(TaskControl, "Control", 8192, NULL, 2, NULL, 1);
-
+    xTaskCreatePinnedToCore(TaskSendPairs, "SendPairs", 2048, NULL, 1, NULL, 1);
     }
   
 
