@@ -30,6 +30,8 @@ int i = 0;
 int j = 0;
 int loop_stage = 0;
 int Actuator1_Off= 0, Actuator2_Off = 0;
+bool currentUpward = true;   // global direction flag
+
 
 #define NUM_SENSORS 10
 #define FILTER_SIZE 5
@@ -83,7 +85,9 @@ void TaskReadSensors(void *pvParameters) {
     Serial.print(value1);
     Serial.print(" ,");
     Serial.print(value2);
-    Serial.println(" )");
+    Serial.print(" )  ");
+    Serial.print(done_1);
+    Serial.println(done_2);
 
 
     // also update global Pressure[] if needed
@@ -149,76 +153,117 @@ void pressure_Distribute() {
   delay(2000);
   state = 1;
 }
-void pressure_Control() {
+void pressure_Control()
+{
+    float sensor10 = Pressure[9];   // sensor on actuator-1 side
+    float sensor9  = Pressure[8];   // sensor on actuator-2 side
 
-    float sensor10 = Pressure[9];
-    float sensor9  = Pressure[8];
-
-    if ((sensor10 >= 20) || (sensor9 >= 20)) {
-        state = 1;   // Emergency stop
+    // -------------------- Safety: emergency stop --------------------
+    if ((value1 >= 16) && (value2 >= 16)) {
+      MC33996_J1.turn_pin_on(7);
+      MC33996_J1.turn_pin_on(8);
+      MC33996_J1.turn_pin_on(12);  
+      for(;;){
+      }           // trigger stop if over-pressure
+        
     }
-    if (sensor10 >= value1) {    // sensor10
-    done_1 = 5;                 // or any value ≥5 to satisfy the control loop
-    Actuator1_P = 0;            // no need to inflate
-}
 
-if (sensor9 >= value2) {    // sensor9
-    done_2 = 5;
-    Actuator2_P = 0;
-}
-if(!Actuator1_Off){
+    // ----------------------------------------------------------------
+    // Auto-skip: if the next command’s target is already satisfied
+    // mark this actuator as “done” immediately so the state machine
+    // can move on instead of waiting forever.
+    // Upward means we want to INCREASE pressure to reach value,
+    // Downward means we want to DECREASE pressure to reach value.
+    // ----------------------------------------------------------------
+    if (!Actuator1_Off) {
+        if (currentUpward && sensor10 >  value1) done_1 = 5;
+        if (!currentUpward && sensor10 <= value1) done_1 = 5;
+    }
+    if (!Actuator2_Off) {
+        if (currentUpward && sensor9  >  value2) done_2 = 5;
+        if (!currentUpward && sensor9  <= value2) done_2 = 5;
+    }
 
-        MC33996_J1.turn_pin_on(6); // pressure pump on
-        if (sensor10 <= value1) {
-            MC33996_J1.turn_pin_on(7);
+    // -------------------- Actuator-1 control ------------------------
+    if (!Actuator1_Off) {
+        if (currentUpward) {
+            // Inflate until sensor10 crosses value1
+            MC33996_J1.turn_pin_on(6);   // pressure pump on
+            if (sensor10 <= value1) {
+                MC33996_J1.turn_pin_on(7);
+            } else {
+                MC33996_J1.turn_pin_off(7);
+                done_1++;
+            }
+        } else { // downward: vacuum
+            MC33996_J1.turn_pin_on(13);  // vacuum pump on
+            if (sensor10 > value1) {
+                MC33996_J1.turn_pin_on(0);
+            } else {
+                MC33996_J1.turn_pin_off(0);
+                done_1++;
+            }
         }
-        if (sensor10 > value1) {
-            MC33996_J1.turn_pin_off(7);
-            done_1 = done_1 + 1;
+    }
+
+    // -------------------- Actuator-2 control ------------------------
+    if (!Actuator2_Off) {
+        if (currentUpward) {
+            MC33996_J1.turn_pin_on(6);   // pressure pump on
+            if (sensor9 <= value2) {
+                MC33996_J1.turn_pin_on(8);
+            } else {
+                MC33996_J1.turn_pin_off(8);
+                done_2++;
+            }
+        } else { // downward: vacuum
+            MC33996_J1.turn_pin_on(13);  // vacuum pump on
+            if (sensor9 > value2) {
+                MC33996_J1.turn_pin_on(1);
+            } else {
+                MC33996_J1.turn_pin_off(1);
+                done_2++;
+            }
         }
-    
+    }
 
-    // if (!Actuator1_P) {
-    //     MC33996_J1.turn_pin_on(13); // Vaccum pump on
-    //     if (sensor10 > value1) {
-    //         MC33996_J1.turn_pin_on(0);
-    //     }
-    //     if (sensor10 <= value1) {
-    //         MC33996_J1.turn_pin_off(0);
-    //         done_1 = done_1 + 1;
-    //     }
-    // }
-}
-if(!Actuator2_Off){
-
-        MC33996_J1.turn_pin_on(6); // pressure pump on
-        if (sensor9 <= value2) {
-            MC33996_J1.turn_pin_on(8);
-        }
-        if (sensor9 > value2) {
-            MC33996_J1.turn_pin_off(8);
-            done_2 = done_2 + 1;
-        }
-
-
-    // if (!Actuator2_P) {
-    //     MC33996_J1.turn_pin_on(13); // Vaccum pump on
-    //     if (sensor9 > value2) {
-    //         MC33996_J1.turn_pin_on(1);
-    //     }
-    //     if (sensor9 <= value2) {
-    //         MC33996_J1.turn_pin_off(1);
-    //         done_2 = done_2 + 1;
-    //     }
-    // }
-}
-
+    // -------------------- Advance when both sides are done ----------
     if ((done_1 >= 5) && (done_2 >= 5)) {
-      //if ((done_1 >= 5)){
-        state = 1;
+        state = 1;                   // signal that this pair is complete
     }
 }
 
+// Call this each time state == 1 to get the next pair
+// true = j increasing  (incremental run)
+// false = j decreasing (decremental run)
+bool nextPair(int &i, int &j, bool &upward)
+{
+    static int row = 0;
+    static int col = 1;
+    static bool up = true;
+    static bool first = true;
+
+    if (first) { first = false; i = 0; j = 1; upward = true; return true; }
+
+    if (up) {                 // ascending
+        if (++col > 16) {
+            up = false;       // next pass will be downward
+            ++row;
+            col = 16;
+        }
+    } else {                  // descending
+        if (--col < 0) {
+            up = true;        // next pass will be upward
+            ++row;
+            col = 1;
+        }
+    }
+
+    i = row;
+    j = col;
+    upward = up;              // tell caller which direction we are in **now**
+    return true;
+}
 
 
 void Post_Sensors(){
@@ -358,74 +403,17 @@ void Command_Detection(){
 //    state = 0;
 // }
     delay(500);
-    if (state == 1) {
-        switch (loop_stage) {
-            case 0: // (0,1)-(0,10)
-                Actuator1_Off = 1;
-                done_1 = 6;
-                value1 = i;
-                value2 = j;
-                j++;
-                if (j > 16) {
-                    loop_stage = 1;
-                    i = 1;
-                    j = 10;
-                }
-                break;
-            case 1: // (1,10)-(10,10)
-                Actuator1_Off = 0;
-                Actuator2_Off = 1;
-                done_2 = 6;
-                value1 = i;
-                value2 = j;
-                i++;
-                if (i > 16) {
-                    loop_stage = 2;
-                    i = 0;
-                    j = 0;
-                }
-                break;
-            case 2: // (0,0)
-                pressure_Release();
-                value1 = i;
-                value2 = j;
-                loop_stage = 3;
-                break;
-            case 3: // (0,0)-(10,0)
-                Actuator1_Off = 0;
-                Actuator2_Off = 1;
-                done_2 = 6;
-                value1 = i;
-                value2 = j;
-                i++;
-                if (i > 16) {
-                    loop_stage = 4;
-                    i = 10;
-                    j = 1;
-                }
-                break;
-            case 4: // (10,1)-(10,10)
-                Actuator1_Off = 1;
-                Actuator2_Off = 0;
-                done_1 = 6;
-                value1 = i;
-                value2 = j;
-                j++;
-                if (j > 16) {
-                    loop_stage = 5;
-                    i = 0;
-                    j = 1;
-                }
-                break;
-            case 5: // (0,0)
-                pressure_Release();
-                value1 = i;
-                value2 = j;
-                loop_stage = 0;
-                break;
-        }
-    }
+if (state == 1) {
+    bool upward;
+    nextPair(i, j, upward);
+
+    value1 = i;
+    value2 = j;
+
+    // Save direction in a global so pressure_Control() can see it
+    currentUpward = upward;
     state = 0;
+}
 }
 
 
