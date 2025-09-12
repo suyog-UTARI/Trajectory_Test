@@ -26,7 +26,10 @@ float Pressure[10];
 int Flex_angel[5] = {10,20,30,40,110};
 unsigned long start_time;
 int count = 0;
-
+int i = 0;
+int j = 0;
+int loop_stage = 0;
+int Actuator1_Off= 0, Actuator2_Off = 0;
 
 #define NUM_SENSORS 10
 #define FILTER_SIZE 5
@@ -69,58 +72,31 @@ void TaskReadSensors(void *pvParameters) {
 
   for (;;) {
     float sensor10 = Single_Pre_Read_J1(10);
-    float sensor9  = Single_Pre_Read_J1(9);
+    float sensor9  = Single_Pre_Read_J1(8);
     Serial.print(millis());
     Serial.print(',');
     Serial.print("Sensor10: ");
     Serial.print(sensor10, 2);
     Serial.print("  |  Sensor9: ");
-    Serial.println(sensor9, 2);
+    Serial.print(sensor9, 2);
+    Serial.print("  | (");
+    Serial.print(value1);
+    Serial.print(" ,");
+    Serial.print(value2);
+    Serial.println(" )");
+
 
     // also update global Pressure[] if needed
     Pressure[9] = sensor10;
     Pressure[8] = sensor9;
 
-    vTaskDelay(pdMS_TO_TICKS(200)); // read every 200 ms
+    vTaskDelay(pdMS_TO_TICKS(20)); // read every 20 ms
   }
 }
 
 // Task that feeds value pairs, but only when the system
 // has finished processing the previous pair (i.e. state returned to 1).
-void TaskSendPairs(void *pvParameters)
-{
-    (void) pvParameters;
 
-    for (int a = 0; a <= 9; a++) {
-        for (int b = 0; b <= 9; b++) {
-            if (a == 0 && b == 0) continue; // optional: skip (0,0)
-
-            // ---- Wait for the system to be ready ----
-            // Only send a pair after the controller is idle (state==1)
-            while (state != 1) {      // wait until previous cycle finishes
-                vTaskDelay(pdMS_TO_TICKS(100)); // check every 100 ms
-            }
-
-            // ---- Send the pair exactly as if typed from Serial monitor ----
-            Serial.print(a);
-            Serial.print(' ');
-            Serial.println(b);
-
-            // ---- Now wait for the controller to actually start
-            //      (Command_Detection will set state = 0) ----
-            while (state != 0) {      // ensure it has switched to active
-                vTaskDelay(pdMS_TO_TICKS(50));
-            }
-
-            // At this point the pair is being processed.
-            // When the control loop finishes it will set state back to 1,
-            // and the outer while() at the top of the next iteration
-            // will hold off until that happens.
-        }
-    }
-
-    vTaskDelete(NULL); // All pairs sent — stop the task
-}
 
 void TaskControl(void *pvParameters) {
   (void) pvParameters;
@@ -130,6 +106,7 @@ void TaskControl(void *pvParameters) {
       done_2 = 0;
       MC33996_J1.turn_pin_off(6);
       MC33996_J1.turn_pin_off(13);
+      MC33996_J1.turn_pin_off(12);
       MC33996_J1.turn_pin_off(7);
       MC33996_J1.turn_pin_off(8);
       MC33996_J1.turn_pin_off(0);
@@ -143,19 +120,35 @@ void TaskControl(void *pvParameters) {
       if (Pressure[8] <= value2) Actuator2_P = 1;
       else Actuator2_P = 0;
 
-      Post_Sensors();
-      LCD_Display();
+      
+      // LCD_Display();
 
     } else if (state == 0) {
-      Post_Sensors();
-      LCD_Display();
+      
+      //LCD_Display();
       pressure_Control();
     }
 
     vTaskDelay(pdMS_TO_TICKS(50)); // control loop every 50 ms
   }
 }
+void pressure_Release() {
+  MC33996_J1.turn_pin_on(7);
+  MC33996_J1.turn_pin_on(8);
+  MC33996_J1.turn_pin_on(12);
 
+  delay(6000);
+    MC33996_J1.turn_pin_off(7);
+  MC33996_J1.turn_pin_off(8);
+  MC33996_J1.turn_pin_off(12);
+  state = 1;
+}
+void pressure_Distribute() {
+  MC33996_J1.turn_pin_on(7);
+  MC33996_J1.turn_pin_on(8);
+  delay(2000);
+  state = 1;
+}
 void pressure_Control() {
 
     float sensor10 = Pressure[9];
@@ -164,8 +157,17 @@ void pressure_Control() {
     if ((sensor10 >= 20) || (sensor9 >= 20)) {
         state = 1;   // Emergency stop
     }
+    if (sensor10 >= value1) {    // sensor10
+    done_1 = 5;                 // or any value ≥5 to satisfy the control loop
+    Actuator1_P = 0;            // no need to inflate
+}
 
-    if (Actuator1_P) {
+if (sensor9 >= value2) {    // sensor9
+    done_2 = 5;
+    Actuator2_P = 0;
+}
+if(!Actuator1_Off){
+
         MC33996_J1.turn_pin_on(6); // pressure pump on
         if (sensor10 <= value1) {
             MC33996_J1.turn_pin_on(7);
@@ -174,20 +176,21 @@ void pressure_Control() {
             MC33996_J1.turn_pin_off(7);
             done_1 = done_1 + 1;
         }
-    }
+    
 
-    if (!Actuator1_P) {
-        MC33996_J1.turn_pin_on(13); // Vaccum pump on
-        if (sensor10 > value1) {
-            MC33996_J1.turn_pin_on(0);
-        }
-        if (sensor10 <= value1) {
-            MC33996_J1.turn_pin_off(0);
-            done_1 = done_1 + 1;
-        }
-    }
+    // if (!Actuator1_P) {
+    //     MC33996_J1.turn_pin_on(13); // Vaccum pump on
+    //     if (sensor10 > value1) {
+    //         MC33996_J1.turn_pin_on(0);
+    //     }
+    //     if (sensor10 <= value1) {
+    //         MC33996_J1.turn_pin_off(0);
+    //         done_1 = done_1 + 1;
+    //     }
+    // }
+}
+if(!Actuator2_Off){
 
-    if (Actuator2_P) {
         MC33996_J1.turn_pin_on(6); // pressure pump on
         if (sensor9 <= value2) {
             MC33996_J1.turn_pin_on(8);
@@ -196,20 +199,22 @@ void pressure_Control() {
             MC33996_J1.turn_pin_off(8);
             done_2 = done_2 + 1;
         }
-    }
 
-    if (!Actuator2_P) {
-        MC33996_J1.turn_pin_on(13); // Vaccum pump on
-        if (sensor9 > value2) {
-            MC33996_J1.turn_pin_on(1);
-        }
-        if (sensor9 <= value2) {
-            MC33996_J1.turn_pin_off(1);
-            done_2 = done_2 + 1;
-        }
-    }
+
+    // if (!Actuator2_P) {
+    //     MC33996_J1.turn_pin_on(13); // Vaccum pump on
+    //     if (sensor9 > value2) {
+    //         MC33996_J1.turn_pin_on(1);
+    //     }
+    //     if (sensor9 <= value2) {
+    //         MC33996_J1.turn_pin_off(1);
+    //         done_2 = done_2 + 1;
+    //     }
+    // }
+}
 
     if ((done_1 >= 5) && (done_2 >= 5)) {
+      //if ((done_1 >= 5)){
         state = 1;
     }
 }
@@ -266,7 +271,7 @@ float Single_Pre_Read_J1(int sensor){
         Volt = Cal_read * 0.0012207 * 1.506; // 0.0012207 = 5/4096, 1.53 is compensation so sensor readout matches MCU reading
         // ana_read = 0.02439 * ( analogRead( PRESSURE_SEN1 ) - sensor_bias[ sensor - 6] );
         //Sensor_read = ( Volt - 0.5 ) * 14.5 * 1.142;//ABPBANN004, 4Bar=58PSI
-        Sensor_read = (Volt - 0.48)*15.25;
+        Sensor_read = (Volt - 0.5)*15.25;
         //Sensor_read = ((Volt - 0.58)*16.9) + 0.3;
          if ( Sensor_read < 0 ) { Sensor_read = 0; }
     int idx = sensor - 1; // sensors are 1-indexed
@@ -330,20 +335,100 @@ void LCD_Display(){
 }
 
 void Command_Detection(){
-    String serialReceived;
-    if (Serial.available() > 0)
-    {
-        serialReceived = Serial.readString();
-    }
-    serialReceived.trim();
+//     String serialReceived;
+//     if (Serial.available() > 0)
+//     {
+//         serialReceived = Serial.readString();
+//     }
+//     serialReceived.trim();
+//     if(serialReceived == "d"){   //d to distribute pressure
+//       pressure_Distribute();
+//       return;
+//     }
+//     if(serialReceived == "r"){    //r to release pressure
+//       pressure_Release();
+//       return;
+//     }
 
-    if (serialReceived.length() >= 1) {
-        int space1 = serialReceived.indexOf(' ');
-        value1 = serialReceived.substring(0, space1).toFloat();
-        value2 = serialReceived.substring(space1 + 1).toFloat();
-   state = 0;
+//     if (serialReceived.length() >= 1) {
+//         int space1 = serialReceived.indexOf(' ');
+//         value1 = serialReceived.substring(0, space1).toFloat();
+//         value1 = value1 + 0.9;
+//         value2 = serialReceived.substring(space1 + 1).toFloat();
+//    state = 0;
+// }
+    delay(500);
+    if (state == 1) {
+        switch (loop_stage) {
+            case 0: // (0,1)-(0,10)
+                Actuator1_Off = 1;
+                done_1 = 6;
+                value1 = i;
+                value2 = j;
+                j++;
+                if (j > 16) {
+                    loop_stage = 1;
+                    i = 1;
+                    j = 10;
+                }
+                break;
+            case 1: // (1,10)-(10,10)
+                Actuator1_Off = 0;
+                Actuator2_Off = 1;
+                done_2 = 6;
+                value1 = i;
+                value2 = j;
+                i++;
+                if (i > 16) {
+                    loop_stage = 2;
+                    i = 0;
+                    j = 0;
+                }
+                break;
+            case 2: // (0,0)
+                pressure_Release();
+                value1 = i;
+                value2 = j;
+                loop_stage = 3;
+                break;
+            case 3: // (0,0)-(10,0)
+                Actuator1_Off = 0;
+                Actuator2_Off = 1;
+                done_2 = 6;
+                value1 = i;
+                value2 = j;
+                i++;
+                if (i > 16) {
+                    loop_stage = 4;
+                    i = 10;
+                    j = 1;
+                }
+                break;
+            case 4: // (10,1)-(10,10)
+                Actuator1_Off = 1;
+                Actuator2_Off = 0;
+                done_1 = 6;
+                value1 = i;
+                value2 = j;
+                j++;
+                if (j > 16) {
+                    loop_stage = 5;
+                    i = 0;
+                    j = 1;
+                }
+                break;
+            case 5: // (0,0)
+                pressure_Release();
+                value1 = i;
+                value2 = j;
+                loop_stage = 0;
+                break;
+        }
+    }
+    state = 0;
 }
-}
+
+
 
 void setup()
 {
@@ -373,7 +458,6 @@ void setup()
     // FreeRTOS tasks
     xTaskCreatePinnedToCore(TaskReadSensors, "ReadSensors", 4096, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(TaskControl, "Control", 8192, NULL, 2, NULL, 1);
-    xTaskCreatePinnedToCore(TaskSendPairs, "SendPairs", 2048, NULL, 1, NULL, 1);
     }
   
 
