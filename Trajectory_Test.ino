@@ -159,7 +159,7 @@ void pressure_Control()
     float sensor9  = Pressure[8];   // sensor on actuator-2 side
 
     // -------------------- Safety: emergency stop --------------------
-    if ((value1 >= 16) && (value2 >= 16)) {
+    if ((value1 >= 19) && (value2 >= 19)) {
       MC33996_J1.turn_pin_on(7);
       MC33996_J1.turn_pin_on(8);
       MC33996_J1.turn_pin_on(12);  
@@ -246,10 +246,10 @@ bool nextPair(int &i, int &j, bool &upward)
     if (first) { first = false; i = 0; j = 1; upward = true; return true; }
 
     if (up) {                 // ascending
-        if (++col > 16) {
+        if (++col > 19) {
             up = false;       // next pass will be downward
             ++row;
-            col = 16;
+            col = 19;
         }
     } else {                  // descending
         if (--col < 0) {
