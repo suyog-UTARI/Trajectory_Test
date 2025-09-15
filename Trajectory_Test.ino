@@ -1,180 +1,148 @@
 #include "Arduino.h"
-#include "TFT_eSPI.h"/* Please use the TFT library provided in the library. */
+#include "TFT_eSPI.h"
 #include <Wire.h>
 #include <SPI.h>
-#include "NxpDemuxsw.h"     // MC33996 SPI 
-#include "AnalogADG731.h"   //Analog 16 in 1 out selector
-#include "TCA9548A.h"       //I2C multiplex
-#include <Adafruit_PWMServoDriver.h>  // PCA9685 PWM Servo Driver Library
-#include "esp_adc_cal.h"    // For ESP32 accurate ADC reading calibration
-#include "AbpSensor.h"      // SPI Pressure sensor
-#include "NotoSansBold15.h" // Font for LCD display
-#include "NotoSansMonoSCB20.h" // Font for LCD display
+#include "NxpDemuxsw.h"
+#include "AnalogADG731.h"
+#include "TCA9548A.h"
+#include <Adafruit_PWMServoDriver.h>
+#include "esp_adc_cal.h"
+#include "AbpSensor.h"
+#include "NotoSansBold15.h"
+#include "NotoSansMonoSCB20.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-
-float value1 = 0, value2 =0;
-int done_1 = 0, done_2 =0;
-int state = 1;
-int Actuator1_P, Actuator2_P;   // Variable to determine if the actuator need to be pressurized or deflated 0 is to be deflation and 1 is inflation.
-byte  Readcommand[10]; 
-int Therapy_time = 0, Therapy_cycle = 0;
-float Glove_Set_Pressure = 1, Wrist_Set_Pressure = 1, Elbow_Set_Pressure = 1 ;
-float Degree = 20; // Initial degree: 20, will be replaced by 40 in the loop.
+float value1 = 0, value2 = 0;
+int done_1 = 0, done_2 = 0;
+int state   = 1;
+int Actuator1_P, Actuator2_P;
+byte Readcommand[10];
 float Pressure[10];
-int Flex_angel[5] = {10,20,30,40,110};
-unsigned long start_time;
-int count = 0;
-int i = 0;
-int j = 0;
-int loop_stage = 0;
-int Actuator1_Off= 0, Actuator2_Off = 0;
-bool currentUpward = true;   // global direction flag
+int i = 0, j = 0;                 // current pair
+bool upwardFlag = true;           // current direction
 
+int Actuator1_Off = 0, Actuator2_Off = 0;
+bool currentUpward = true;
 
 #define NUM_SENSORS 10
 #define FILTER_SIZE 5
-
 float pressure_buffer[NUM_SENSORS][FILTER_SIZE] = {0};
-int buffer_index[NUM_SENSORS] = {0};
-
+int   buffer_index[NUM_SENSORS] = {0};
 
 #define MC33996_CS1   16
-#define MC33996_CS2   14 
-#define MC33996_CS3   10
 #define ADG731_CS1    11
-#define ADG731_CS2    4 
-#define ADG731_CS3    3
 #define PRESSURE_SEN1 13
-#define PRESSURE_SEN2 2
-#define PRESSURE_SEN3 1
 
-
-TFT_eSPI lcd = TFT_eSPI(); // LCD setting
+TFT_eSPI lcd = TFT_eSPI();
 TFT_eSprite sprite = TFT_eSprite(&lcd);
- 
-#define gray   0x6B6D // Color setting for LCD
-#define blue   0x0967
-#define orange 0xC260
-#define purple 0x604D
-#define green  0x1AE9
-#define yellow 0xF7E0
 
 TCA9548A I2CMux_J1(0x73);
+NxpDemuxsw MC33996_J1  ( MC33996_CS1 );
+AnalogADG731 ADG731_J1 ( ADG731_CS1  );
+Adafruit_PWMServoDriver Pro_pwm_J1 = Adafruit_PWMServoDriver(0x41);
 
-NxpDemuxsw MC33996_J1  ( MC33996_CS1 ); //MC33996 at daughter board1
-AnalogADG731 ADG731_J1 ( ADG731_CS1  ); //ADG731 at daughter board1
+// ===============================================================
+// NEW: 20×20 pair generator
+// ===============================================================
+bool nextPair20x20(int &row, int &col, bool &upward)
+{
+    static bool firstCall = true;
+    if (firstCall) {
+        row = 0; col = 0; upward = true;
+        firstCall = false;
+        return true;
+    }
 
-Adafruit_PWMServoDriver Pro_pwm_J1 = Adafruit_PWMServoDriver( 0x41 ); // Jumper setting on the board1
+    if (upward) {                       // upward sweep
+        if (col < 19) { col++; return true; }
+        upward = false;                 // reached top, start downward
+        return true;
+    } else {                            // downward sweep
+        if (col > 0) { col--; return true; }
+        // reached bottom of column
+        pressure_Release();             // <<< RELEASE when column done
+        if (row < 19) {
+            row++; col = 0; upward = true;
+            return true;
+        }
+        return false;                   // finished final column
+    }
+}
 
+// ===============================================================
+void pressure_Release() {
+    MC33996_J1.turn_pin_on(7);
+    MC33996_J1.turn_pin_on(8);
+    MC33996_J1.turn_pin_on(12);
+    delay(6000);
+    MC33996_J1.turn_pin_off(7);
+    MC33996_J1.turn_pin_off(8);
+    MC33996_J1.turn_pin_off(12);
+    state = 1;
+}
+// ===============================================================
 
 void TaskReadSensors(void *pvParameters) {
-  (void) pvParameters;
-
   for (;;) {
     float sensor10 = Single_Pre_Read_J1(10);
     float sensor9  = Single_Pre_Read_J1(8);
-    Serial.print(millis());
-    Serial.print(',');
-    Serial.print("Sensor10: ");
-    Serial.print(sensor10, 2);
-    Serial.print("  |  Sensor9: ");
-    Serial.print(sensor9, 2);
-    Serial.print("  | (");
-    Serial.print(value1);
-    Serial.print(" ,");
-    Serial.print(value2);
-    Serial.print(" )  ");
-    Serial.print(done_1);
-    Serial.println(done_2);
-
-
-    // also update global Pressure[] if needed
+    Serial.printf("%lu, Sensor10: %.2f | Sensor9: %.2f | (%0.f ,%0.f) %d%d\n",
+                  millis(), sensor10, sensor9, value1, value2, done_1, done_2);
     Pressure[9] = sensor10;
     Pressure[8] = sensor9;
-
-    vTaskDelay(pdMS_TO_TICKS(20)); // read every 20 ms
+    vTaskDelay(pdMS_TO_TICKS(20));
   }
 }
 
-// Task that feeds value pairs, but only when the system
-// has finished processing the previous pair (i.e. state returned to 1).
-
-
 void TaskControl(void *pvParameters) {
-  (void) pvParameters;
   for (;;) {
     if (state == 1) {
-      done_1 = 0;
-      done_2 = 0;
-      MC33996_J1.turn_pin_off(6);
-      MC33996_J1.turn_pin_off(13);
-      MC33996_J1.turn_pin_off(12);
-      MC33996_J1.turn_pin_off(7);
-      MC33996_J1.turn_pin_off(8);
-      MC33996_J1.turn_pin_off(0);
+      done_1 = done_2 = 0;
+      MC33996_J1.turn_pin_off(6); MC33996_J1.turn_pin_off(13);
+      MC33996_J1.turn_pin_off(12);MC33996_J1.turn_pin_off(7);
+      MC33996_J1.turn_pin_off(8); MC33996_J1.turn_pin_off(0);
       MC33996_J1.turn_pin_off(1);
 
       Command_Detection();
 
-      if (Pressure[9] <= value1) Actuator1_P = 1;
-      else Actuator1_P = 0;
-
-      if (Pressure[8] <= value2) Actuator2_P = 1;
-      else Actuator2_P = 0;
-
-      
-      // LCD_Display();
-
-    } else if (state == 0) {
-      
-      //LCD_Display();
+      Actuator1_P = (Pressure[9] <= value1);
+      Actuator2_P = (Pressure[8] <= value2);
+    }
+    else if (state == 0) {
       pressure_Control();
     }
-
-    vTaskDelay(pdMS_TO_TICKS(50)); // control loop every 50 ms
+    vTaskDelay(pdMS_TO_TICKS(50));
   }
 }
-void pressure_Release() {
-  MC33996_J1.turn_pin_on(7);
-  MC33996_J1.turn_pin_on(8);
-  MC33996_J1.turn_pin_on(12);
 
-  delay(6000);
-    MC33996_J1.turn_pin_off(7);
-  MC33996_J1.turn_pin_off(8);
-  MC33996_J1.turn_pin_off(12);
-  state = 1;
+void Command_Detection(){
+    delay(500);
+    if (state == 1) {
+        if (!nextPair20x20(i, j, upwardFlag)) {
+            Serial.println("Finished 20x20 pattern.");
+            return;
+        }
+        value1 = i;
+        value2 = j;
+        currentUpward = upwardFlag;   // for pressure_Control()
+        state = 0;
+    }
 }
-void pressure_Distribute() {
-  MC33996_J1.turn_pin_on(7);
-  MC33996_J1.turn_pin_on(8);
-  delay(2000);
-  state = 1;
-}
+
+// ---------------- pressure_Control() unchanged -----------------
 void pressure_Control()
 {
-    float sensor10 = Pressure[9];   // sensor on actuator-1 side
-    float sensor9  = Pressure[8];   // sensor on actuator-2 side
+    float sensor10 = Pressure[9];
+    float sensor9  = Pressure[8];
 
-    // -------------------- Safety: emergency stop --------------------
     if ((value1 >= 19) && (value2 >= 19)) {
-      MC33996_J1.turn_pin_on(7);
-      MC33996_J1.turn_pin_on(8);
-      MC33996_J1.turn_pin_on(12);  
-      for(;;){
-      }           // trigger stop if over-pressure
-        
+        MC33996_J1.turn_pin_on(7);
+        MC33996_J1.turn_pin_on(8);
+        MC33996_J1.turn_pin_on(12);
+        for(;;){}  // emergency stop
     }
 
-    // ----------------------------------------------------------------
-    // Auto-skip: if the next command’s target is already satisfied
-    // mark this actuator as “done” immediately so the state machine
-    // can move on instead of waiting forever.
-    // Upward means we want to INCREASE pressure to reach value,
-    // Downward means we want to DECREASE pressure to reach value.
-    // ----------------------------------------------------------------
     if (!Actuator1_Off) {
         if (currentUpward && sensor10 >  value1) done_1 = 5;
         if (!currentUpward && sensor10 <= value1) done_1 = 5;
@@ -184,271 +152,77 @@ void pressure_Control()
         if (!currentUpward && sensor9  <= value2) done_2 = 5;
     }
 
-    // -------------------- Actuator-1 control ------------------------
     if (!Actuator1_Off) {
         if (currentUpward) {
-            // Inflate until sensor10 crosses value1
-            MC33996_J1.turn_pin_on(6);   // pressure pump on
-            if (sensor10 <= value1) {
-                MC33996_J1.turn_pin_on(7);
-            } else {
-                MC33996_J1.turn_pin_off(7);
-                done_1++;
-            }
-        } else { // downward: vacuum
-            MC33996_J1.turn_pin_on(13);  // vacuum pump on
-            if (sensor10 > value1) {
-                MC33996_J1.turn_pin_on(0);
-            } else {
-                MC33996_J1.turn_pin_off(0);
-                done_1++;
-            }
+            MC33996_J1.turn_pin_on(6);
+            if (sensor10 <= value1) MC33996_J1.turn_pin_on(7);
+            else { MC33996_J1.turn_pin_off(7); done_1++; }
+        } else {
+            MC33996_J1.turn_pin_on(13);
+            if (sensor10 > value1) MC33996_J1.turn_pin_on(0);
+            else { MC33996_J1.turn_pin_off(0); done_1++; }
         }
     }
 
-    // -------------------- Actuator-2 control ------------------------
     if (!Actuator2_Off) {
         if (currentUpward) {
-            MC33996_J1.turn_pin_on(6);   // pressure pump on
-            if (sensor9 <= value2) {
-                MC33996_J1.turn_pin_on(8);
-            } else {
-                MC33996_J1.turn_pin_off(8);
-                done_2++;
-            }
-        } else { // downward: vacuum
-            MC33996_J1.turn_pin_on(13);  // vacuum pump on
-            if (sensor9 > value2) {
-                MC33996_J1.turn_pin_on(1);
-            } else {
-                MC33996_J1.turn_pin_off(1);
-                done_2++;
-            }
+            MC33996_J1.turn_pin_on(6);
+            if (sensor9 <= value2) MC33996_J1.turn_pin_on(8);
+            else { MC33996_J1.turn_pin_off(8); done_2++; }
+        } else {
+            MC33996_J1.turn_pin_on(13);
+            if (sensor9 > value2) MC33996_J1.turn_pin_on(1);
+            else { MC33996_J1.turn_pin_off(1); done_2++; }
         }
     }
 
-    // -------------------- Advance when both sides are done ----------
-    if ((done_1 >= 5) && (done_2 >= 5)) {
-        state = 1;                   // signal that this pair is complete
-    }
+    if ((done_1 >= 5) && (done_2 >= 5)) state = 1;
 }
 
-// Call this each time state == 1 to get the next pair
-// true = j increasing  (incremental run)
-// false = j decreasing (decremental run)
-bool nextPair(int &i, int &j, bool &upward)
-{
-    static int row = 0;
-    static int col = 1;
-    static bool up = true;
-    static bool first = true;
-
-    if (first) { first = false; i = 0; j = 1; upward = true; return true; }
-
-    if (up) {                 // ascending
-        if (++col > 19) {
-            up = false;       // next pass will be downward
-            ++row;
-            col = 19;
-        }
-    } else {                  // descending
-        if (--col < 0) {
-            up = true;        // next pass will be upward
-            ++row;
-            col = 1;
-        }
-    }
-
-    i = row;
-    j = col;
-    upward = up;              // tell caller which direction we are in **now**
-    return true;
-}
-
-
-void Post_Sensors(){
-    Pre_Sensor_Read();
-}
-
-
-void Pre_Pump_ON(){
-    MC33996_J1.turn_pin_on(6);
-}
-
-void Pre_Pump_OFF(){
-    MC33996_J1.turn_pin_off(6);
-}
-
-void Vac_Def_ON(){
-    MC33996_J1.turn_pin_on(12);
-}
-
-void Vac_Def_OFF(){
-    MC33996_J1.turn_pin_off(12);
-}
-
-void Vac_Pump_ON(){
-    MC33996_J1.turn_pin_on(13);
-}
-
-void Vac_Pump_OFF(){
-    MC33996_J1.turn_pin_off(13);
-}
-
-void Pre_Sensor_Read(){
-    Serial.print(millis());
-    Serial.print(',');
-    for (int i = 10; i > 8; i--)
-    {   
-        Pressure[ i - 1 ] = Single_Pre_Read_J1( i ); // 10-1 save to 9-0 in array
-        Serial.print(Pressure[ i - 1 ]); // Convert to PSI
-        Serial.print(',');
-    }
-    Serial.println("zz");
-}
-
+// ---------------- helper functions (unchanged) -----------------
 float Single_Pre_Read_J1(int sensor){
-    float Sensor_read = 0;
     float Volt = 0;
-        ADG731_J1.select( sensor ); //Array starting from 0
-        int ADC_Reading =  analogRead( PRESSURE_SEN1 );
-        int Cal_read = readADC_Cal(ADC_Reading);
-        Volt = Cal_read * 0.0012207 * 1.506; // 0.0012207 = 5/4096, 1.53 is compensation so sensor readout matches MCU reading
-        // ana_read = 0.02439 * ( analogRead( PRESSURE_SEN1 ) - sensor_bias[ sensor - 6] );
-        //Sensor_read = ( Volt - 0.5 ) * 14.5 * 1.142;//ABPBANN004, 4Bar=58PSI
-        Sensor_read = (Volt - 0.5)*15.25;
-        //Sensor_read = ((Volt - 0.58)*16.9) + 0.3;
-         if ( Sensor_read < 0 ) { Sensor_read = 0; }
-    int idx = sensor - 1; // sensors are 1-indexed
+    ADG731_J1.select(sensor);
+    int ADC_Reading = analogRead(PRESSURE_SEN1);
+    int Cal_read = readADC_Cal(ADC_Reading);
+    Volt = Cal_read * 0.0012207 * 1.506;
+    float Sensor_read = (Volt - 0.5) * 15.25;
+    if (Sensor_read < 0) Sensor_read = 0;
+    int idx = sensor - 1;
     pressure_buffer[idx][buffer_index[idx]] = Sensor_read;
     buffer_index[idx] = (buffer_index[idx] + 1) % FILTER_SIZE;
-
-    // Calculate average
-    float sum = 0;
-    for (int i = 0; i < FILTER_SIZE; i++) {
-        sum += pressure_buffer[idx][i];
-    }
+    float sum = 0; for (int k=0;k<FILTER_SIZE;k++) sum += pressure_buffer[idx][k];
     return sum / FILTER_SIZE;
 }
-
-  
 
 uint32_t readADC_Cal(int ADC_Raw)
 {
   esp_adc_cal_characteristics_t adc_chars;
-  
-  esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, 1100, &adc_chars);
-  return(esp_adc_cal_raw_to_voltage(ADC_Raw, &adc_chars));
-}  
-
-void LCD_Display(){
-    int fromTop = 15;
-    int fromLeft = 15;
-    int w = 320; // LCD: 320x170 resolution
-    int h = 170;
-
-    sprite.fillSprite( TFT_BLACK ); //Create each small colored area
-    sprite.loadFont(NotoSansBold15);
-    sprite.drawString("Upper-body Exoskeleton Controller V1.0", 10, 15);
-
-    for (int i = 0; i < 5; i++) { // Show 5 finger degree
-        sprite.drawString(String( i + 1), 35 + 60 * i, 38);
-        sprite.fillSmoothRoundRect(fromLeft + (i * 60), fromTop + 30, 50, 50, 6, gray, TFT_BLACK);
-        sprite.drawSmoothArc(fromLeft + (i * 60) + 25, fromTop  + 60, 20, 22, 45, 315, 0x21C9, gray);
-        sprite.drawSmoothArc(fromLeft + (i * 60) + 25, fromTop  + 60, 20, 22, 45, map(Flex_angel[i], 0, 120, 46, 315), yellow, gray);
-        sprite.drawString(String(Flex_angel[i]), fromLeft + (i * 60) + 15, fromTop + 70);
-
-    }
-
-    for ( int i = 0; i < 5; i++ ) { // Show 5 finger press, pre and vac
-        sprite.fillSmoothRoundRect(fromLeft + (i * 60), fromTop + 60 + 30, 50, 50, 6, gray, TFT_BLACK);
-        
-        if( Pressure[ 9 - i ] - Pressure[ 4 - i ] > 0.1 ){
-            sprite.fillSmoothRoundRect(fromLeft + (i * 60), fromTop + 60 + 30, 50, 50, 6, orange, TFT_BLACK);
-            sprite.drawSmoothArc(fromLeft + (i * 60) + 25, fromTop  + 60 + 60, 20, 22, 45, 315, 0x21C9, gray);
-            sprite.drawSmoothArc(fromLeft + (i * 60) + 25, fromTop  + 60 + 60, 20, 22, 45, map(Pressure[9 - i], 0, 100, 46, 315), yellow, gray);
-            sprite.drawString(String(Pressure[9 - i]), fromLeft + (i * 60) + 10, fromTop + 120);
-        }
-        if( Pressure[ 9 - i ] - Pressure[ 4 - i ] < -0.1 ){
-            sprite.fillSmoothRoundRect(fromLeft + (i * 60), fromTop + 60 + 30, 50, 50, 6, purple, TFT_BLACK);
-            sprite.drawSmoothArc(fromLeft + (i * 60) + 25, fromTop  + 60 + 60, 20, 22, 45, 315, 0x21C9, gray);
-            sprite.drawSmoothArc(fromLeft + (i * 60) + 25, fromTop  + 60 + 60, 20, 22, 45, map(Pressure[4 - i], 0, 100, 46, 315), yellow, gray);
-            sprite.drawString(String(Pressure[4 - i]), fromLeft + (i * 60) + 10, fromTop + 120);
-        }
-    }
-    sprite.pushSprite(0,0);
+  esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11,
+                           ADC_WIDTH_BIT_12, 1100, &adc_chars);
+  return esp_adc_cal_raw_to_voltage(ADC_Raw, &adc_chars);
 }
 
-void Command_Detection(){
-//     String serialReceived;
-//     if (Serial.available() > 0)
-//     {
-//         serialReceived = Serial.readString();
-//     }
-//     serialReceived.trim();
-//     if(serialReceived == "d"){   //d to distribute pressure
-//       pressure_Distribute();
-//       return;
-//     }
-//     if(serialReceived == "r"){    //r to release pressure
-//       pressure_Release();
-//       return;
-//     }
-
-//     if (serialReceived.length() >= 1) {
-//         int space1 = serialReceived.indexOf(' ');
-//         value1 = serialReceived.substring(0, space1).toFloat();
-//         value1 = value1 + 0.9;
-//         value2 = serialReceived.substring(space1 + 1).toFloat();
-//    state = 0;
-// }
-    delay(500);
-if (state == 1) {
-    bool upward;
-    nextPair(i, j, upward);
-
-    value1 = i;
-    value2 = j;
-
-    // Save direction in a global so pressure_Control() can see it
-    currentUpward = upward;
-    state = 0;
-}
-}
-
-
-
-void setup()
-{
+// -------------------- setup & loop -----------------------------
+void setup() {
     Serial.begin(115200);
-    Serial.print("Serial begin");
-    Wire.begin( 17, 18); // Diff with Veysel's design, cannot copy
-    SPI.begin(21, -1, 12, -1); //SCLK, MISO, MOSI, SS
-
-    pinMode(15, OUTPUT); // to boot with DEV board
-    digitalWrite(15, 1);  // and/or power from 5v rail instead of USB
+    Wire.begin(17,18);
+    SPI.begin(21, -1, 12, -1);
+    pinMode(15, OUTPUT); digitalWrite(15, 1);
 
     Pro_pwm_J1.begin();
-    Pro_pwm_J1.setPWMFreq(1600);  // Set PWM Freq
-
-    Pro_pwm_J1.setPWM(0, 0, 4095);//ON
+    Pro_pwm_J1.setPWMFreq(1600);
+    Pro_pwm_J1.setPWM(0, 0, 4095);
     Pro_pwm_J1.setPWM(1, 0, 4095);
     Pro_pwm_J1.setPWM(2, 0, 4095);
 
-    lcd.init(); // LCD setting
-    lcd.fillScreen(TFT_BLACK);
-    lcd.setRotation(3);
-    
+    lcd.init(); lcd.fillScreen(TFT_BLACK); lcd.setRotation(3);
     sprite.createSprite(320, 170);
     sprite.setTextDatum(3);
     sprite.setSwapBytes(true);
 
-    // FreeRTOS tasks
-    xTaskCreatePinnedToCore(TaskReadSensors, "ReadSensors", 4096, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(TaskControl, "Control", 8192, NULL, 2, NULL, 1);
-    }
-  
-
-void loop() {
-    
+    xTaskCreatePinnedToCore(TaskReadSensors,"ReadSensors",4096,NULL,1,NULL,1);
+    xTaskCreatePinnedToCore(TaskControl,"Control",8192,NULL,2,NULL,1);
 }
+
+void loop() { }
