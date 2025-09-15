@@ -57,13 +57,11 @@ bool nextPair20x20(int &row, int &col, bool &upward)
     if (upward) {                       // upward sweep
         if (col < 19) { col++; return true; }
         upward = false;                 // reached top, start downward
+        pressure_Release();
         return true;
     } else {                            // downward sweep
-        // if (col > 0) { pressure_Release(); col = 0; return true; }
-        // reached bottom of column
-        // pressure_Release();             // <<< RELEASE when column done
         if (row < 19) {
-            row++; col = 0;  upward = true; pressure_Release();
+            row++; col = 0;  upward = true;
             return true;
         }
         return false;                   // finished final column
@@ -75,7 +73,7 @@ void pressure_Release() {
     MC33996_J1.turn_pin_on(7);
     MC33996_J1.turn_pin_on(8);
     MC33996_J1.turn_pin_on(12);
-    delay(6000);
+    delay(7000);
     MC33996_J1.turn_pin_off(7);
     MC33996_J1.turn_pin_off(8);
     MC33996_J1.turn_pin_off(12);
