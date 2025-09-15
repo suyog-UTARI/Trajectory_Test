@@ -59,11 +59,11 @@ bool nextPair20x20(int &row, int &col, bool &upward)
         upward = false;                 // reached top, start downward
         return true;
     } else {                            // downward sweep
-        if (col > 0) { col--; return true; }
+        // if (col > 0) { pressure_Release(); col = 0; return true; }
         // reached bottom of column
-        pressure_Release();             // <<< RELEASE when column done
+        // pressure_Release();             // <<< RELEASE when column done
         if (row < 19) {
-            row++; col = 0; upward = true;
+            row++; col = 0;  upward = true; pressure_Release();
             return true;
         }
         return false;                   // finished final column
