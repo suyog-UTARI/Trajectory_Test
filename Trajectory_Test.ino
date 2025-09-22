@@ -124,7 +124,7 @@ void pressure_Release() {
   MC33996_J1.turn_pin_on(8);
   MC33996_J1.turn_pin_on(12);
 
-  delay(2000);
+  delay(8000);
   state = 1;
 }
 void pressure_Distribute() {
@@ -138,9 +138,9 @@ void pressure_Control() {
     float sensor10 = Pressure[9];
     float sensor9  = Pressure[8];
 
-    if ((sensor10 >= 20) || (sensor9 >= 20)) {
-        state = 1;   // Emergency stop
-    }
+    // if ((sensor10 >= 20) || (sensor9 >= 20)) {
+    //     state = 1;   // Emergency stop
+    // }
 
     if (Actuator1_P) {
         MC33996_J1.turn_pin_on(6); // pressure pump on
@@ -326,7 +326,7 @@ void Command_Detection(){
     if (serialReceived.length() >= 1) {
         int space1 = serialReceived.indexOf(' ');
         value1 = serialReceived.substring(0, space1).toFloat();
-        value1 = value1 + 0.9;
+        value1 = value1;
         value2 = serialReceived.substring(space1 + 1).toFloat();
    state = 0;
 }
