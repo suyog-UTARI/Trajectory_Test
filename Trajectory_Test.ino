@@ -55,12 +55,12 @@ bool nextPair20x20(int &row, int &col, bool &upward)
     }
 
     if (upward) {                       // upward sweep
-        if (col < 19) { col++; return true; }
+        if (col < 20) { col++; return true; }
         upward = false;                 // reached top, start downward
         pressure_Release();
         return true;
     } else {                            // downward sweep
-        if (row < 19) {
+        if (row < 20) {
             row++; col = 0;  upward = true;
             return true;
         }
@@ -115,7 +115,7 @@ void TaskControl(void *pvParameters) {
 }
 
 void Command_Detection(){
-    delay(500);
+    delay(1000);
     if (state == 1) {
         if (!nextPair20x20(i, j, upwardFlag)) {
             Serial.println("Finished 20x20 pattern.");
@@ -134,7 +134,7 @@ void pressure_Control()
     float sensor10 = Pressure[9];
     float sensor9  = Pressure[8];
 
-    if ((value1 >= 19) && (value2 >= 19)) {
+    if ((value1 >= 20) && (value2 >= 20)) {
         MC33996_J1.turn_pin_on(7);
         MC33996_J1.turn_pin_on(8);
         MC33996_J1.turn_pin_on(12);
