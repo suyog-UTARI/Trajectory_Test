@@ -12,6 +12,8 @@
 #include "NotoSansMonoSCB20.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "SparkFun_Displacement_Sensor_Arduino_Library.h" // Click here to get the library: http://librarymanager/All#SparkFun_Displacement_Sensor
+
 
 float value1 = 0, value2 = 0;
 int done_1 = 0, done_2 = 0;
@@ -41,6 +43,18 @@ TCA9548A I2CMux_J1(0x73);
 NxpDemuxsw MC33996_J1  ( MC33996_CS1 );
 AnalogADG731 ADG731_J1 ( ADG731_CS1  );
 Adafruit_PWMServoDriver Pro_pwm_J1 = Adafruit_PWMServoDriver(0x41);
+
+ADS myFlexSensor; //Create instance of the ADS class
+
+void tcaSelect(uint8_t i)
+{
+  if ((i < 0) || (i > 8)) return;
+
+  Wire.beginTransmission(0x71); // 0X70 is the demux I2C address
+  Wire.write(1 << i);
+  Wire.endTransmission();
+}
+
 
 // ===============================================================
 // NEW: 20×20 pair generator
@@ -85,8 +99,10 @@ void TaskReadSensors(void *pvParameters) {
   for (;;) {
     float sensor10 = Single_Pre_Read_J1(10);
     float sensor9  = Single_Pre_Read_J1(8);
-    Serial.printf("%lu, Sensor10: %.2f | Sensor9: %.2f | (%0.f ,%0.f) %d%d\n",
-                  millis(), sensor10, sensor9, value1, value2, done_1, done_2);
+    float X = myFlexSensor.getX();
+    float Y = myFlexSensor.getY();
+    Serial.printf("%lu, Sensor10: %.2f | Sensor9: %.2f | X: %.2f | Y: %.2f | (%0.f ,%0.f)  %d%d\n",
+                  millis(), sensor10, sensor9, X, Y, value1, value2, done_1, done_2);
     Pressure[9] = sensor10;
     Pressure[8] = sensor9;
     vTaskDelay(pdMS_TO_TICKS(20));
@@ -207,7 +223,14 @@ void setup() {
     Wire.begin(17,18);
     SPI.begin(21, -1, 12, -1);
     pinMode(15, OUTPUT); digitalWrite(15, 1);
-
+    // tcaSelect(0);
+    // Serial.println("SparkFun Displacement Sensor Example");
+    // if (myFlexSensor.begin() == false)
+  // {
+  //   Serial.println(F("No sensor detected. Check wiring. Freezing..."));
+  //   while (1)
+  //     ;
+  // }
     Pro_pwm_J1.begin();
     Pro_pwm_J1.setPWMFreq(1600);
     Pro_pwm_J1.setPWM(0, 0, 4095);
