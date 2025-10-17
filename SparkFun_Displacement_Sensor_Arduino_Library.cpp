@@ -436,7 +436,7 @@ bool ADS::calibrateZero()
 //The X axis is moveable when the sensor is lying on a table. Y axis is moved when you pull sensor up from table.
 bool ADS::calibrateX()
 {
-  return (calibrate(ADS_CALIBRATE_FLAT, 90));
+  return (calibrate(ADS_CALIBRATE_FLAT, 50));
 }
 
 //Call when sensor is straight on Y axis and 90 degrees on X axis

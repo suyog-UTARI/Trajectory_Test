@@ -81,7 +81,7 @@ void TaskReadSensors(void *pvParameters) {
 
   for (;;) {
     float sensor10 = Single_Pre_Read_J1(10);
-    float sensor9  = Single_Pre_Read_J1(8);
+    float sensor9  = Single_Pre_Read_J1(9);
     // float angleX = myFlexSensor.getX();
     // float angleY = myFlexSensor.getY();
     Serial.print(millis());
@@ -92,8 +92,8 @@ void TaskReadSensors(void *pvParameters) {
     Serial.print(sensor9, 2);
     if (myFlexSensor.available() == true)
   {
-    Serial.print(" | AngleX: ");
-    Serial.print(myFlexSensor.getX());
+    // Serial.print(" | AngleX: ");
+    // Serial.print(myFlexSensor.getX());
     Serial.print(" | AngleY: ");
     Serial.println(myFlexSensor.getY());
   }
@@ -178,10 +178,10 @@ void pressure_Control() {
     if (!Actuator1_P) {
         MC33996_J1.turn_pin_on(13); // Vaccum pump on
         if (sensor10 > value1) {
-            MC33996_J1.turn_pin_on(0);
+            MC33996_J1.turn_pin_on(5);
         }
         if (sensor10 <= value1) {
-            MC33996_J1.turn_pin_off(0);
+            MC33996_J1.turn_pin_off(5);
             done_1 = done_1 + 1;
         }
     }
