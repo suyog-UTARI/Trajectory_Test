@@ -82,25 +82,28 @@ void TaskReadSensors(void *pvParameters) {
   for (;;) {
     float sensor10 = Single_Pre_Read_J1(10);
     float sensor9  = Single_Pre_Read_J1(8);
-    float angleX = myFlexSensor.getX();
-    float angleY = myFlexSensor.getY();
+    // float angleX = myFlexSensor.getX();
+    // float angleY = myFlexSensor.getY();
     Serial.print(millis());
     Serial.print(',');
     Serial.print("Sensor10: ");
     Serial.print(sensor10, 2);
     Serial.print("  |  Sensor9: ");
-    Serial.println(sensor9, 2);
+    Serial.print(sensor9, 2);
+    if (myFlexSensor.available() == true)
+  {
     Serial.print(" | AngleX: ");
-    Serial.println(angleX, 2);
+    Serial.print(myFlexSensor.getX());
     Serial.print(" | AngleY: ");
-    Serial.println(angleY, 2);
-
+    Serial.println(myFlexSensor.getY());
+  }
 
     // also update global Pressure[] if needed
     Pressure[9] = sensor10;
     Pressure[8] = sensor9;
 
-    vTaskDelay(pdMS_TO_TICKS(20)); // read every 20 ms
+    // vTaskDelay(pdMS_TO_TICKS(20)); // read every 20 ms
+    delay(10);
   }
 }
 
@@ -354,6 +357,7 @@ void Command_Detection(){
 void setup()
 {
     Serial.begin(115200);
+    delay(2000);
     Serial.print("Serial begin");
     Wire.begin( 17, 18); // Diff with Veysel's design, cannot copy
     SPI.begin(21, -1, 12, -1); //SCLK, MISO, MOSI, SS
@@ -362,6 +366,13 @@ void setup()
     digitalWrite(15, 1);  // and/or power from 5v rail instead of USB
     
     tcaSelect(0);
+
+    if (myFlexSensor.begin() == false)
+  {
+    Serial.println(F("No sensor detected. Check wiring. Freezing..."));
+    while (1)
+      ;
+  }
 
     Pro_pwm_J1.begin();
     Pro_pwm_J1.setPWMFreq(1600);  // Set PWM Freq
@@ -378,7 +389,7 @@ void setup()
     sprite.setTextDatum(3);
     sprite.setSwapBytes(true);
 
-    // FreeRTOS tasks
+    //FreeRTOS tasks
     xTaskCreatePinnedToCore(TaskReadSensors, "ReadSensors", 4096, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(TaskControl, "Control", 8192, NULL, 2, NULL, 1);
 
@@ -386,5 +397,5 @@ void setup()
   
 
 void loop() {
-    
+
 }
